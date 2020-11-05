@@ -48,7 +48,7 @@ func TestSadPath(t *testing.T) {
 
 	url := fmt.Sprintf("%s/api/slow", srv.URL)
 	requestBody, err := json.Marshal(map[string]uint64{
-		"timeout": 7000,
+		"timeout": 10000,
 	})
 	if err != nil {
 		t.Fatal(err)

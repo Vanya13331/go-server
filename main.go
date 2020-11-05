@@ -37,49 +37,57 @@ func middlewareCheckRequest(next http.Handler) http.Handler {
 				return
 			}
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
 func middlewareCheckTimeout(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var timeout SlowRequest
+		background := r.Context()
+		cCtx, cCancel := context.WithCancel(background)
+		r.WithContext(cCtx)
 
-		err := json.NewDecoder(r.Body).Decode(&timeout)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
+		go func() {
+			next.ServeHTTP(w, r)
+			cCancel()
+		}()
 
-		if timeout.Timeout > tooLongTimeout {
+		select {
+		case <-time.After(time.Millisecond * time.Duration(int64(tooLongTimeout))):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte(`{"error": "timeout too long"}`))
+		case <-cCtx.Done():
 			return
 		}
-		ctx := context.WithValue(r.Context(), "timeout", timeout.Timeout)
-		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func timeoutResposne(ch chan<- string, timeout uint64) {
-	time.Sleep(time.Millisecond * time.Duration(int64(timeout)))
-	ch <- "Successful result"
+func timeoutResposne(ch chan<- uint8, timeout uint64) {
+	select {
+	case <-time.After(time.Millisecond * time.Duration(int64(timeout))):
+		ch <- 1
+	}
 }
 
 func apiSlow(w http.ResponseWriter, r *http.Request) {
-	timeout := r.Context().Value("timeout")
-	ch := make(chan string)
+	var timeout SlowRequest
+	err := json.NewDecoder(r.Body).Decode(&timeout)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
 
-	go timeoutResposne(ch, timeout.(uint64))
+	ch := make(chan uint8)
+
+	go timeoutResposne(ch, timeout.Timeout)
 
 	select {
 	case <-ch:
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status": "ok"}`))
 	}
-
-	close(ch)
 }
 
 func handlers() http.Handler {
